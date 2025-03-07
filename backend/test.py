@@ -3,9 +3,11 @@ import websockets
 import json
 import time
 
+url = ''
+
 all_time = time.time()
 async def send_audio_file():
-    async with websockets.connect('wss://asr.gpu.rdhasaki.com/se') as websocket:
+    async with websockets.connect(url) as websocket:
         
         with open('1424.wav', 'rb') as f:
             audio_data = f.read()

@@ -5,13 +5,9 @@ from websocket import create_connection
 
 import json
 import time
-import numpy as np
 
 from queue import  Queue, Empty
 
-
-WAV2VEC2_INIT = None
-TEXT_PROCESSING_INIT = None
 
 class VADProcessor:
     """Handles Voice Activity Detection."""
