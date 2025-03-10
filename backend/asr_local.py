@@ -4,7 +4,6 @@ import struct
 import asyncio
 import websockets
 import json
-import time
 from concurrent.futures import ThreadPoolExecutor
 
 class VADWebsocketProcessor:
@@ -12,12 +11,12 @@ class VADWebsocketProcessor:
         self.device_name = device_name
         self.websocket_url = websocket_url
         self.rate = 16000
-        self.frame_duration = 30  # 30 ms frames
+        self.frame_duration = 30  
         self.audio = pyaudio.PyAudio()
-        self.format = pyaudio.paInt16  # 16-bit PCM
-        self.chunk = int(self.rate * self.frame_duration / 1000)  # 480 samples per chunk
+        self.format = pyaudio.paInt16  
+        self.chunk = int(self.rate * self.frame_duration / 1000)  
         self.vad = webrtcvad.Vad()
-        self.vad.set_mode(3)  # VAD sensitivity (0-3, 3 is most aggressive)
+        self.vad.set_mode(3)  
         self.loop = asyncio.new_event_loop()
         self.executor = ThreadPoolExecutor(max_workers=1)
         
@@ -58,42 +57,34 @@ class VADWebsocketProcessor:
         return bytes(header)
 
     async def process_audio_segment(self, audio_data):
-        """Process a complete audio segment with websocket"""
         if not audio_data:
             return
             
-        # Create WAV header
         wav_header = self.create_wav_header(self.rate, 1, 16, len(audio_data))
         wav_data = wav_header + audio_data
         
         try:
             async with websockets.connect(self.websocket_url) as websocket:
-                # Send audio data
                 await websocket.send(wav_data)
                 
-                # Receive and process the response
                 response = await websocket.recv()
                 response_json = json.loads(response)
                 
-                # Extract and display the transcription
                 if "text" in response_json:
                     print(f"Speech recognized: {response_json['text']}")
                 else:
                     print("Server response:", response_json)
                 
-                # Close the connection properly
                 await websocket.send(b'')
                 
         except Exception as e:
             print(f"Error in websocket communication: {e}")
 
     def process_audio_frames(self, frames):
-        """Submit audio frames to be processed by the websocket in the event loop"""
         if frames:
             asyncio.run_coroutine_threadsafe(self.process_audio_segment(frames), self.loop)
 
     def start_event_loop(self):
-        """Start the asyncio event loop in a separate thread"""
         asyncio.set_event_loop(self.loop)
         self.loop.run_forever()
 
@@ -133,13 +124,11 @@ class VADWebsocketProcessor:
                 else:
                     if speech_detected and len(frames) > self.chunk:
                         print('Silence detected, processing speech segment')
-                        # Process the audio segment
                         self.process_audio_frames(frames)
-                        frames = b''  # Reset frames after processing
+                        frames = b''  
                         speech_detected = False
 
         except KeyboardInterrupt:
-            # Process any remaining frames before exiting
             if frames and speech_detected:
                 print("Processing final segment before exit...")
                 self.process_audio_frames(frames)

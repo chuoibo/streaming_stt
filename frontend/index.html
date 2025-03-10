@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-time Speech Recognition</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            padding: 20px;
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        button:disabled {
+            background-color: #95a5a6;
+            cursor: not-allowed;
+        }
+        #recordButton {
+            background-color: #e74c3c;
+        }
+        #recordButton:hover {
+            background-color: #c0392b;
+        }
+        #recordButton.recording {
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { background-color: #e74c3c; }
+            50% { background-color: #c0392b; }
+            100% { background-color: #e74c3c; }
+        }
+        .transcript-container {
+            margin-top: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 15px;
+            min-height: 200px;
+            max-height: 400px;
+            overflow-y: auto;
+            background-color: #f9f9f9;
+        }
+        .transcript-entry {
+            margin-bottom: 10px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #eee;
+        }
+        .status {
+            text-align: center;
+            margin: 10px 0;
+            font-style: italic;
+            color: #7f8c8d;
+        }
+        .error {
+            color: #e74c3c;
+            text-align: center;
+            margin: 10px 0;
+        }
+        .visualization {
+            height: 100px;
+            width: 100%;
+            background-color: #ecf0f1;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            overflow: hidden;
+            position: relative;
+        }
+        #waveform {
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Real-time Speech Recognition</h1>
+        
+        <div class="visualization">
+            <canvas id="waveform"></canvas>
+        </div>
+        
+        <div class="controls">
+            <button id="startButton">Connect</button>
+            <button id="recordButton" disabled>Start Recording</button>
+            <button id="stopButton" disabled>Stop</button>
+        </div>
+        
+        <div id="status" class="status">Ready to connect</div>
+        <div id="error" class="error"></div>
+        
+        <div class="transcript-container">
+            <div id="transcript"></div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // DOM Elements
+            const startButton = document.getElementById('startButton');
+            const recordButton = document.getElementById('recordButton');
+            const stopButton = document.getElementById('stopButton');
+            const statusEl = document.getElementById('status');
+            const errorEl = document.getElementById('error');
+            const transcriptEl = document.getElementById('transcript');
+            const waveformCanvas = document.getElementById('waveform');
+            const waveformCtx = waveformCanvas.getContext('2d');
+            
+            // Audio context and analyser
+            let audioContext;
+            let analyser;
+            let microphone;
+            let scriptProcessor;
+            
+            // WebSocket connection
+            let socket;
+            let isConnected = false;
+            let isRecording = false;
+            
+            // Audio processing parameters
+            const sampleRate = 16000;
+            const frameSize = 480; // 30ms @ 16kHz
+            
+            // Update canvas size
+            function resizeCanvas() {
+                waveformCanvas.width = waveformCanvas.offsetWidth;
+                waveformCanvas.height = waveformCanvas.offsetHeight;
+            }
+            
+            // Initialize audio visualization
+            function setupAudioVisualization(stream) {
+                if (!audioContext) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 2048;
+                
+                microphone = audioContext.createMediaStreamSource(stream);
+                microphone.connect(analyser);
+                
+                // Draw waveform
+                function drawWaveform() {
+                    if (!isRecording) return;
+                    
+                    requestAnimationFrame(drawWaveform);
+                    
+                    const bufferLength = analyser.frequencyBinCount;
+                    const dataArray = new Uint8Array(bufferLength);
+                    analyser.getByteTimeDomainData(dataArray);
+                    
+                    waveformCtx.fillStyle = '#ecf0f1';
+                    waveformCtx.fillRect(0, 0, waveformCanvas.width, waveformCanvas.height);
+                    
+                    waveformCtx.lineWidth = 2;
+                    waveformCtx.strokeStyle = isRecording ? '#e74c3c' : '#3498db';
+                    waveformCtx.beginPath();
+                    
+                    const sliceWidth = waveformCanvas.width * 1.0 / bufferLength;
+                    let x = 0;
+                    
+                    for (let i = 0; i < bufferLength; i++) {
+                        const v = dataArray[i] / 128.0;
+                        const y = v * waveformCanvas.height / 2;
+                        
+                        if (i === 0) {
+                            waveformCtx.moveTo(x, y);
+                        } else {
+                            waveformCtx.lineTo(x, y);
+                        }
+                        
+                        x += sliceWidth;
+                    }
+                    
+                    waveformCtx.lineTo(waveformCanvas.width, waveformCanvas.height / 2);
+                    waveformCtx.stroke();
+                }
+                
+                drawWaveform();
+            }
+            
+            // Connect to WebSocket server
+            function connectWebSocket() {
+                // Change this URL to match your server address when deploying
+                const serverUrl = 'ws://localhost:8765';
+                
+                statusEl.textContent = 'Connecting to server...';
+                errorEl.textContent = '';
+                
+                try {
+                    socket = new WebSocket(serverUrl);
+                    
+                    socket.onopen = () => {
+                        isConnected = true;
+                        statusEl.textContent = 'Connected to server';
+                        startButton.disabled = true;
+                        recordButton.disabled = false;
+                        
+                        // Send ping to keep connection alive
+                        setInterval(() => {
+                            if (isConnected) {
+                                socket.send(JSON.stringify({ type: 'ping' }));
+                            }
+                        }, 30000);
+                    };
+                    
+                    socket.onclose = () => {
+                        isConnected = false;
+                        isRecording = false;
+                        statusEl.textContent = 'Disconnected from server';
+                        startButton.disabled = false;
+                        recordButton.disabled = true;
+                        stopButton.disabled = true;
+                        recordButton.classList.remove('recording');
+                    };
+                    
+                    socket.onerror = (error) => {
+                        console.error('WebSocket error:', error);
+                        errorEl.textContent = 'Connection error. Please try again.';
+                        isConnected = false;
+                        startButton.disabled = false;
+                        recordButton.disabled = true;
+                        stopButton.disabled = true;
+                    };
+                    
+                    socket.onmessage = (event) => {
+                        try {
+                            const message = JSON.parse(event.data);
+                            
+                            switch (message.type) {
+                                case 'status':
+                                    statusEl.textContent = message.message;
+                                    break;
+                                    
+                                case 'transcription':
+                                    const div = document.createElement('div');
+                                    div.className = 'transcript-entry';
+                                    div.textContent = message.text;
+                                    transcriptEl.appendChild(div);
+                                    transcriptEl.scrollTop = transcriptEl.scrollHeight;
+                                    break;
+                                    
+                                case 'error':
+                                    errorEl.textContent = message.message;
+                                    break;
+                                    
+                                case 'pong':
+                                    // Server is alive
+                                    break;
+                            }
+                        } catch (e) {
+                            console.error('Error parsing message:', e);
+                        }
+                    };
+                } catch (error) {
+                    console.error('Failed to connect:', error);
+                    errorEl.textContent = 'Failed to connect to the server.';
+                }
+            }
+            
+            // Start recording from the microphone
+            async function startRecording() {
+                if (!isConnected) {
+                    errorEl.textContent = 'Not connected to server. Please connect first.';
+                    return;
+                }
+                
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ 
+                        audio: {
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            sampleRate: 44100
+                        } 
+                    });
+                    
+                    isRecording = true;
+                    statusEl.textContent = 'Recording...';
+                    recordButton.classList.add('recording');
+                    recordButton.disabled = true;
+                    stopButton.disabled = false;
+                    
+                    // Set up audio visualization
+                    setupAudioVisualization(stream);
+                    
+                    // Set up audio processing
+                    if (!audioContext) {
+                        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    }
+                    
+                    // Create audio processing node
+                    scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+                    
+                    // Get microphone input
+                    microphone = audioContext.createMediaStreamSource(stream);
+                    microphone.connect(scriptProcessor);
+                    scriptProcessor.connect(audioContext.destination);
+                    
+                    // Downsample audio to 16kHz mono
+                    const resamplerBuffer = new Float32Array(frameSize);
+                    let resamplerBufferIndex = 0;
+                    
+                    scriptProcessor.onaudioprocess = (audioProcessingEvent) => {
+                        if (!isRecording) return;
+                        
+                        const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
+                        
+                        // Downsample to 16kHz (assuming original is 44.1kHz or 48kHz)
+                        const downsampleFactor = Math.floor(audioContext.sampleRate / sampleRate);
+                        
+                        for (let i = 0; i < inputData.length; i += downsampleFactor) {
+                            if (resamplerBufferIndex < frameSize) {
+                                resamplerBuffer[resamplerBufferIndex++] = inputData[i];
+                            }
+                            
+                            if (resamplerBufferIndex >= frameSize) {
+                                // Convert float32 to int16
+                                const int16Buffer = new Int16Array(frameSize);
+                                for (let j = 0; j < frameSize; j++) {
+                                    // Scale and convert to 16-bit PCM
+                                    int16Buffer[j] = Math.max(-32768, Math.min(32767, Math.floor(resamplerBuffer[j] * 32768)));
+                                }
+                                
+                                // Convert to base64 for transmission
+                                const audioChunkBase64 = arrayBufferToBase64(int16Buffer.buffer);
+                                
+                                // Send audio chunk to the server
+                                if (socket && socket.readyState === WebSocket.OPEN) {
+                                    socket.send('data:audio/raw;base64,' + audioChunkBase64);
+                                }
+                                
+                                resamplerBufferIndex = 0;
+                            }
+                        }
+                    };
+                    
+                } catch (error) {
+                    console.error('Error accessing microphone:', error);
+                    errorEl.textContent = 'Error accessing microphone: ' + error.message;
+                    isRecording = false;
+                    recordButton.classList.remove('recording');
+                    recordButton.disabled = false;
+                }
+            }
+            
+            // Stop recording
+            function stopRecording() {
+                if (isRecording) {
+                    isRecording = false;
+                    statusEl.textContent = 'Recording stopped';
+                    recordButton.classList.remove('recording');
+                    recordButton.disabled = false;
+                    stopButton.disabled = true;
+                    
+                    // Send end-of-stream signal
+                    if (socket && socket.readyState === WebSocket.OPEN) {
+                        socket.send('EOS');
+                    }
+                    
+                    // Clean up audio resources
+                    if (scriptProcessor) {
+                        scriptProcessor.disconnect();
+                        scriptProcessor = null;
+                    }
+                    
+                    if (microphone) {
+                        microphone.disconnect();
+                        microphone = null;
+                    }
+                    
+                    // Stop all microphone streams
+                    const tracks = document.querySelectorAll('audio, video').forEach(element => {
+                        if (element.srcObject) {
+                            element.srcObject.getTracks().forEach(track => track.stop());
+                            element.srcObject = null;
+                        }
+                    });
+                }
+            }
+            
+            // Utility function: Convert ArrayBuffer to Base64
+            function arrayBufferToBase64(buffer) {
+                let binary = '';
+                const bytes = new Uint8Array(buffer);
+                const len = bytes.byteLength;
+                for (let i = 0; i < len; i++) {
+                    binary += String.fromCharCode(bytes[i]);
+                }
+                return window.btoa(binary);
+            }
+            
+            // Event listeners
+            startButton.addEventListener('click', connectWebSocket);
+            recordButton.addEventListener('click', startRecording);
+            stopButton.addEventListener('click', stopRecording);
+            
+            // Handle page unload
+            window.addEventListener('beforeunload', () => {
+                if (socket && socket.readyState === WebSocket.OPEN) {
+                    socket.close();
+                }
+                stopRecording();
+            });
+            
+            // Initialize canvas
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+        });
+    </script>
+</body>
+</html>
