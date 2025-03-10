@@ -1,191 +1,100 @@
-import threading
+import asyncio
+import websockets
 import pyaudio
 import webrtcvad
-from websocket import create_connection
-
-import json
 import time
+import json
+from collections import deque
+import threading
+import queue
 
-from queue import  Queue, Empty
+# Audio settings
+FORMAT = pyaudio.paInt16
+CHANNELS = 1
+RATE = 16000
+CHUNK_SIZE = 480  # 30ms at 16000 Hz
+VAD_FRAME_MS = 30
+SILENCE_THRESHOLD = 3.0  # 3 seconds in float
 
+# WebSocket URL
+WEBSOCKET_URL = 'wss://asr.gpu.rdhasaki.com/se'
 
-class VADProcessor:
-    """Handles Voice Activity Detection."""
-    def __init__(self, device_name='default'):
-        self.device_name = device_name
-        self.channels = 1
-        self.rate = 16000
-        self.frame_duration = 30
-        self.audio = pyaudio.PyAudio()
-        self.format = pyaudio.paInt16
-        self.chunk = int(self.rate * self.frame_duration / 1000)
-        self.vad = webrtcvad.Vad()
-        self.vad.set_mode(3)
-    
+# Initialize VAD
+vad = webrtcvad.Vad()
+vad.set_mode(1)
 
-    @staticmethod
-    def get_input_device_id(device_name, microphones):
-        for device in microphones:
-            if device_name in device[1]:
-                return device[0]
-    
+# Queue for audio chunks
+audio_queue = queue.Queue()
 
-    @staticmethod
-    def list_microphones(pyaudio_instance):
-        info = pyaudio_instance.get_host_api_info_by_index(0)
-        numdevices = info.get('deviceCount')
+def audio_capture_thread():
+    p = pyaudio.PyAudio()
+    stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK_SIZE)
+    print("Listening... Speak into the microphone.")
+    while True:
+        audio_chunk = stream.read(CHUNK_SIZE, exception_on_overflow=False)
+        audio_queue.put(audio_chunk)
 
-        result = []
-        for i in range(0, numdevices):
-            if (pyaudio_instance.get_device_info_by_host_api_device_index(0, i).get('maxInputChannels')) > 0:
-                name = pyaudio_instance.get_device_info_by_host_api_device_index(
-                    0, i).get('name')
-                result += [[i, name]]
-        return result
+async def send_audio_chunk(websocket, audio_data):
+    st = time.time()
+    await websocket.send(audio_data)
 
+async def receive_responses(websocket):
+    while True:
+        try:
+            response = await asyncio.wait_for(websocket.recv(), timeout=2.0)
+            response = json.loads(response)
+            print(response)
+        except asyncio.TimeoutError:
+            print("No response within timeout period")
 
-    def process_stream(self, asr_input_queue):
-        """Processes audio from a stream and detects speech."""
-        print('Processing audio stream...')
-        microphones = VADProcessor.list_microphones(self.audio)
-
-        selected_input_device_id = VADProcessor.get_input_device_id(
-            self.device_name, microphones)
-
-        stream = self.audio.open(input_device_index=selected_input_device_id,
-                                 format=self.format,
-                                 channels=self.channels,
-                                 rate=self.rate,
-                                 input=True,
-                                 frames_per_buffer=self.chunk)
-        
-        frames = b''
+async def process_audio_stream():
+    threading.Thread(target=audio_capture_thread, daemon=True).start()
+    async with websockets.connect(WEBSOCKET_URL) as websocket:
+        asyncio.create_task(receive_responses(websocket))
+        is_speaking = False
+        speech_buffer = deque()
+        last_speech_time = None  # Timestamp of last speech chunk
 
         while True:
-            if Speech2Txt.exit_event.is_set():
-                break
-            
-            frame = stream.read(self.chunk, exception_on_overflow=False)
-            is_speech = self.vad.is_speech(frame, self.rate)
+            audio_chunk = await asyncio.to_thread(audio_queue.get)
+            is_speech = vad.is_speech(audio_chunk, sample_rate=RATE)
+            current_time = time.time()
 
-            if is_speech:
-                frames += frame
-            else:
-                if len(frames) > 1:
-                    asr_input_queue.put(frames)
-                frames = b''
+            if is_speech and not is_speaking:
+                # Start of speech
+                print("Speech detected, starting transcription...")
+                is_speaking = True
+                last_speech_time = current_time
+                speech_buffer.append(audio_chunk)
 
+            elif is_speech and is_speaking:
+                # Ongoing speech
+                last_speech_time = current_time  # Update last speech time
+                speech_buffer.append(audio_chunk)
+                if len(b''.join(speech_buffer)) >= 10240:
+                    audio_data = b''.join(speech_buffer)[:10240]
+                    speech_buffer.clear()
+                    await send_audio_chunk(websocket, audio_data)
 
-class ASRProcessor:
-    """Handles Automatic Speech Recognition."""
-    def __init__(self):
-        self.ws = create_connection('wss://asr.gpu.rdhasaki.com/se')
-    
+            elif not is_speech and is_speaking:
+                # Silence during speech, check elapsed time
+                speech_buffer.append(audio_chunk)  # Keep buffering
+                if last_speech_time is not None and (current_time - last_speech_time) >= SILENCE_THRESHOLD:
+                    # 3 seconds of silence since last speech
+                    print("Speech ended (3s silence), sending final audio...")
+                    is_speaking = False
+                    last_speech_time = None
+                    audio_data = b''.join(speech_buffer)
+                    speech_buffer.clear()
+                    await send_audio_chunk(websocket, audio_data)
+                    await send_audio_chunk(websocket, b'')
 
-    def send_audio_file(self, audio_data):
-        try:
-            self.ws.send(audio_data)
-            response = self.ws.recv()
-            if response:
-                response_obj = json.loads(response)
-                text = response_obj.get('text', '')
-                return text
-            else:
-                print("Warning: Empty response received from server")
-                return ""
-        except json.JSONDecodeError as e:
-            print(f"JSON decode error: {e}")
-            print(f"Raw response: {response}")
-            return ""
-        except Exception as e:
-            print(f"Error in send_audio_file: {e}")
-            return ""
-                
+            elif not is_speech and not is_speaking:
+                # No speech, no action needed
+                last_speech_time = None
 
-    def process_audio(self, in_queue, out_queue):
-        """Processes audio frames and performs ASR."""
-        print("Processing audio for ASR...")
-        while True:
-            audio_frames = in_queue.get()
-            if audio_frames == "close":
-                break
-
-            text = self.send_audio_file(audio_frames)
-
-            if text:
-                out_queue.put(text)
-                print(f"Recognized Text: {text}")
-
-
-class Speech2Txt:
-    """Main Speech-to-Text Pipeline."""
-    exit_event = threading.Event()
-
-    def __init__(self):
-        self.device_name = 'default'
-        self.asr_output_queue = Queue()
-        self.asr_input_queue = Queue()
-
-
-        self.vad_processor = VADProcessor()
-        self.asr_processor = ASRProcessor()
-
-
-    def start(self):
-        """Start the Speech-to-Text process."""
-        print("Starting Speech-to-Text process...")
-
-        self.vad_thread = threading.Thread(
-            target=self.vad_processor.process_stream,
-            args=(self.asr_input_queue,),
-        )
-        self.vad_thread.start()
-
-        self.asr_thread = threading.Thread(
-            target=self.asr_processor.process_audio,
-            args=(self.asr_input_queue, self.asr_output_queue),
-        )
-        self.asr_thread.start()
-
-
-
-    def stop(self):
-        """Stop the Speech-to-Text process."""
-        print("Stopping Speech-to-Text process...")
-        Speech2Txt.exit_event.set()
-        self.asr_input_queue.put("close")
-        self.asr_output_queue.put(None)
-
-
-        self.vad_thread.join()
-        self.asr_thread.join()
-
-
-    def run(self):
-        """Run the pipeline."""
-        start_time = time.time()
-        self.start()
-        final_text = ""
-
-        try:
-            while True:
-                try:
-                    text = self.asr_output_queue.get(timeout=3.0)
-                    if text:
-                        print(f"Corrected Text: {text}")
-                        final_text += text + " "
-                except Empty:
-                    print("No more input detected. Stopping.")
-                    break
-        except KeyboardInterrupt:
-            print("Interrupted by user.")
-        finally:
-            self.stop()
-        end_time = time.time()
-
-        print(f"Final Text: {final_text} with inference time: {end_time-start_time}s")
-        return final_text
-    
 if __name__ == "__main__":
-    speech2txt = Speech2Txt()
-    speech2txt.run()
+    try:
+        asyncio.run(process_audio_stream())
+    except KeyboardInterrupt:
+        print("\nStopped by user")

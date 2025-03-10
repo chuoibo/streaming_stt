@@ -3,11 +3,9 @@ import websockets
 import json
 import time
 
-url = ''
-
 all_time = time.time()
 async def send_audio_file():
-    async with websockets.connect(url) as websocket:
+    async with websockets.connect('wss://asr.gpu.rdhasaki.com/se') as websocket:
         
         with open('1424.wav', 'rb') as f:
             audio_data = f.read()
@@ -27,5 +25,5 @@ async def send_audio_file():
         await websocket.close()
 
 asyncio.get_event_loop().run_until_complete(send_audio_file())
-
+        
 print('all time = ', time.time() - all_time)
