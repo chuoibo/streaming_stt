@@ -1,4 +1,2 @@
-uvicorn==0.34.0
-fastapi==0.115.11
-pydub==0.25.1
-transformers==4.49.0
+websockets==14.2
+webrtcvad==2.0.10

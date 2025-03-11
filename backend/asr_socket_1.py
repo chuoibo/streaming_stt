@@ -4,6 +4,7 @@ import webrtcvad
 import json
 import struct
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 logging.basicConfig(
@@ -23,7 +24,10 @@ class ASRWebSocketServer:
         self.vad = webrtcvad.Vad(3) 
         self.clients = {}
         self.executors = {}  
-        self.loops = {}      
+        self.loops = {}
+        
+        self.chunk_duration_ms = 1000  
+        self.chunk_size_bytes = int(self.sample_rate * 2 * (self.chunk_duration_ms / 1000)) 
 
     @staticmethod
     def create_wav_header(sample_rate, channels, bits_per_sample, data_length):
@@ -95,10 +99,11 @@ class ASRWebSocketServer:
         client_id = id(websocket)
         
         self.clients[client_id] = {
-            'audio_buffer': bytearray(),
             'speech_detected': False,
             'silent_frames': 0,
-            'max_silent_frames': 1
+            'max_silent_frames': 10,
+            'last_process_time': time.time(),
+            'speech_buffer': bytearray()
         }
         
         self.executors[client_id] = ThreadPoolExecutor(max_workers=1)
@@ -118,25 +123,44 @@ class ASRWebSocketServer:
                         if not client['speech_detected']:
                             logger.debug(f"Speech started for client {client_id}")
                             client['speech_detected'] = True
+                            client['speech_buffer'] = bytearray()
+                            client['last_process_time'] = time.time()
                         
-                        client['audio_buffer'].extend(message)
+                        # Add to speech buffer
+                        client['speech_buffer'].extend(message)
                         client['silent_frames'] = 0
+                        
+                        current_time = time.time()
+                        if (len(client['speech_buffer']) >= self.chunk_size_bytes or 
+                            current_time - client['last_process_time'] >= 1.0):
+                            
+                            logger.info(f"Processing 1-second chunk of {len(client['speech_buffer'])} bytes for client {client_id}")
+                            
+         
+                            self.process_audio_frames(
+                                client_id, 
+                                websocket, 
+                                bytes(client['speech_buffer'])
+                            )
+                            
+                            client['speech_buffer'] = bytearray()
+                            client['last_process_time'] = current_time
                         
                     else: 
                         if client['speech_detected']:
-                            client['audio_buffer'].extend(message)
-                            client['silent_frames'] += 1
-                            
-                            if client['silent_frames'] >= client['max_silent_frames'] and len(client['audio_buffer']) > 144:
-                                logger.info(f"Processing audio segment of {len(client['audio_buffer'])} bytes for client {client_id}")
-                                
+                            if len(client['speech_buffer']) > self.frame_size:
+                                logger.info(f"Processing final chunk before silence of {len(client['speech_buffer'])} bytes for client {client_id}")
                                 self.process_audio_frames(
                                     client_id, 
                                     websocket, 
-                                    bytes(client['audio_buffer'])
+                                    bytes(client['speech_buffer'])
                                 )
-                                
-                                client['audio_buffer'] = bytearray()
+                            
+                            client['silent_frames'] += 1
+                            
+                            if client['silent_frames'] >= client['max_silent_frames']:
+                                logger.debug(f"End of utterance detected for client {client_id}")
+                                client['speech_buffer'] = bytearray()
                                 client['speech_detected'] = False
                                 client['silent_frames'] = 0
                 
@@ -148,11 +172,11 @@ class ASRWebSocketServer:
         except Exception as e:
             logger.error(f"Error occurred with client {client_id}: {e}")
         finally:
-            if client_id in self.clients and self.clients[client_id]['audio_buffer'] and self.clients[client_id]['speech_detected']:
+            if client_id in self.clients and len(self.clients[client_id]['speech_buffer']) > self.frame_size:
                 self.process_audio_frames(
                     client_id, 
                     websocket, 
-                    bytes(self.clients[client_id]['audio_buffer'])
+                    bytes(self.clients[client_id]['speech_buffer'])
                 )
             
             if client_id in self.clients:
@@ -177,7 +201,7 @@ class ASRWebSocketServer:
             self.port
         )
         
-        logger.info(f"ASR WebSocket server started at ws://{self.host}:{self.port}")
+        logger.info(f"Realtime ASR WebSocket server started at ws://{self.host}:{self.port}")
         
         await server.wait_closed()
 

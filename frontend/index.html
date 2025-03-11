@@ -1,359 +1,319 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Real-time Speech Recognition</title>
-  <script src='https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js'></script>
-  <style>
-    body {
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      max-width: 800px;
-      margin: 0 auto;
-      padding: 20px;
-      background-color: #f5f5f5;
-    }
-    
-    h1 {
-      text-align: center;
-      color: #333;
-    }
-    
-    .controls {
-      display: flex;
-      justify-content: center;
-      gap: 10px;
-      margin: 20px 0;
-    }
-    
-    button {
-      padding: 10px 20px;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 16px;
-      font-weight: bold;
-      transition: all 0.3s ease;
-    }
-    
-    #startButton {
-      background-color: #4CAF50;
-      color: white;
-    }
-    
-    #startButton:hover {
-      background-color: #45a049;
-    }
-    
-    #stopButton {
-      background-color: #f44336;
-      color: white;
-    }
-    
-    #stopButton:hover {
-      background-color: #d32f2f;
-    }
-    
-    .status-container {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 20px;
-      padding: 10px;
-      background-color: #e0e0e0;
-      border-radius: 4px;
-    }
-    
-    .indicator {
-      display: inline-block;
-      width: 12px;
-      height: 12px;
-      border-radius: 50%;
-      margin-right: 5px;
-    }
-    
-    .connected {
-      background-color: #4CAF50;
-    }
-    
-    .disconnected {
-      background-color: #f44336;
-    }
-    
-    .transcription-container {
-      background-color: white;
-      border-radius: 8px;
-      padding: 20px;
-      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-      min-height: 300px;
-      max-height: 500px;
-      overflow-y: auto;
-    }
-    
-    .transcription {
-      margin-bottom: 15px;
-      padding-bottom: 15px;
-      border-bottom: 1px solid #eee;
-    }
-    
-    .transcription:last-child {
-      border-bottom: none;
-    }
-    
-    .speaking-indicator {
-      text-align: center;
-      margin-top: 20px;
-      font-style: italic;
-      color: #666;
-    }
-    
-    .pulse {
-      animation: pulse 1.5s infinite;
-    }
-    
-    @keyframes pulse {
-      0% { opacity: 0.5; }
-      50% { opacity: 1; }
-      100% { opacity: 0.5; }
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-time Speech Transcription</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .container {
+            background-color: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin: 20px 0;
+        }
+        
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+        
+        #startBtn {
+            background-color: #4CAF50;
+            color: white;
+        }
+        
+        #startBtn:hover {
+            background-color: #3e8e41;
+        }
+        
+        #stopBtn {
+            background-color: #f44336;
+            color: white;
+        }
+        
+        #stopBtn:hover {
+            background-color: #d32f2f;
+        }
+        
+        #statusIndicator {
+            width: 15px;
+            height: 15px;
+            border-radius: 50%;
+            background-color: #ccc;
+            display: inline-block;
+            margin-right: 10px;
+        }
+        
+        .status {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 20px;
+        }
+        
+        .transcript-container {
+            margin: 20px 0;
+            background-color: #f9f9f9;
+            padding: 15px;
+            border-radius: 5px;
+            border: 1px solid #ddd;
+            min-height: 200px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .transcript-entry {
+            margin-bottom: 10px;
+            padding: 10px;
+            background-color: white;
+            border-radius: 5px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+        
+        .recording #statusIndicator {
+            background-color: #f44336;
+            animation: pulse 1.5s infinite;
+        }
+        
+        @keyframes pulse {
+            0% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.5;
+            }
+            100% {
+                opacity: 1;
+            }
+        }
+    </style>
 </head>
 <body>
-  <h1>Real-time Speech Recognition</h1>
-  
-  <div class="status-container">
-    <div>
-      <span class="indicator disconnected" id="statusIndicator"></span>
-      WebSocket: <span id="webSocketStatus">Not Connected</span>
+    <div class="container">
+        <h1>Real-time Speech Transcription</h1>
+        
+        <div class="status">
+            <span id="statusIndicator"></span>
+            <span id="statusText">Ready</span>
+        </div>
+        
+        <div class="controls">
+            <button id="startBtn">Start Recording</button>
+            <button id="stopBtn" disabled>Stop Recording</button>
+        </div>
+        
+        <div class="transcript-container">
+            <div id="transcriptContent"></div>
+        </div>
     </div>
-    <div id="audioStatus">Microphone: Inactive</div>
-  </div>
-  
-  <div class="controls">
-    <button id="startButton" onclick="startRecording()">Start Recording</button>
-    <button id="stopButton" onclick="stopRecording()" disabled>Stop Recording</button>
-  </div>
-  
-  <div id="speakingIndicator" class="speaking-indicator" style="display: none;">
-    <span class="pulse">Listening...</span>
-  </div>
-  
-  <div class="transcription-container" id="transcriptionContainer">
-    <p class="transcription">Transcriptions will appear here when you start speaking...</p>
-  </div>
-
-  <script>
-    // WebSocket configuration
-    const websocket_uri = 'ws://localhost:5000';
-    let bufferSize = 512;
-    let AudioContext, context, processor, input, globalStream, websocket;
-    let isRecording = false;
     
-    // Initialize WebSocket
-    initWebSocket();
-    
-    function downsampleBuffer(buffer, sampleRate, outSampleRate) {
-      if (outSampleRate == sampleRate) {
-        return buffer;
-      }
-      if (outSampleRate > sampleRate) {
-        throw 'downsampling rate should be smaller than original sample rate';
-      }
-      
-      const sampleRateRatio = sampleRate / outSampleRate;
-      const newLength = Math.round(buffer.length / sampleRateRatio);
-      const result = new Int16Array(newLength);
-      let offsetResult = 0;
-      let offsetBuffer = 0;
-      
-      while (offsetResult < result.length) {
-        const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
-        let accum = 0, count = 0;
+    <script>
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const statusIndicator = document.getElementById('statusIndicator');
+        const statusText = document.getElementById('statusText');
+        const transcriptContent = document.getElementById('transcriptContent');
         
-        for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
-          accum += buffer[i];
-          count++;
+        // WebSocket connection
+        let socket = null;
+        let mediaRecorder = null;
+        let audioContext = null;
+        let audioStream = null;
+        let isRecording = false;
+        
+        // Connect to WebSocket server
+        function connectWebSocket() {
+            const wsUrl = `ws://${window.location.hostname}:5000`;
+            
+            socket = new WebSocket(wsUrl);
+            
+            socket.onopen = function() {
+                console.log('WebSocket connection established');
+                updateStatus('Connected', 'green');
+            };
+            
+            socket.onmessage = function(event) {
+                try {
+                    const response = JSON.parse(event.data);
+                    if (response.text && response.text.trim() !== '') {
+                        addTranscript(response.text);
+                    }
+                } catch (error) {
+                    console.error('Error parsing response:', error);
+                }
+            };
+            
+            socket.onclose = function() {
+                console.log('WebSocket connection closed');
+                updateStatus('Disconnected', '#ccc');
+                if (isRecording) {
+                    stopRecording();
+                }
+            };
+            
+            socket.onerror = function(error) {
+                console.error('WebSocket error:', error);
+                updateStatus('Connection Error', 'red');
+            };
         }
-    
-        result[offsetResult] = Math.min(1, accum / count) * 0x7fff;
-        offsetResult++;
-        offsetBuffer = nextOffsetBuffer;
-      }
-      
-      return result.buffer;
-    }
-    
-    function startRecording() {
-      if (isRecording) return;
-      
-      // Update UI
-      document.getElementById('startButton').disabled = true;
-      document.getElementById('stopButton').disabled = false;
-      document.getElementById('audioStatus').textContent = 'Microphone: Active';
-      document.getElementById('speakingIndicator').style.display = 'block';
-      
-      isRecording = true;
-      
-      AudioContext = window.AudioContext || window.webkitAudioContext;
-      context = new AudioContext({
-        latencyHint: 'interactive',
-      });
-      
-      processor = context.createScriptProcessor(bufferSize, 1, 1);
-      processor.connect(context.destination);
-      context.resume();
-      
-      const handleSuccess = function(stream) {
-        globalStream = stream;
-        input = context.createMediaStreamSource(stream);
-        input.connect(processor);
         
-        processor.onaudioprocess = function(e) {
-          if (!isRecording) return;
-          
-          const left = e.inputBuffer.getChannelData(0);
-          const left16 = downsampleBuffer(left, context.sampleRate, 16000);
-          
-          if (websocket && websocket.readyState === WebSocket.OPEN) {
-            websocket.send(left16);
-          }
-        };
-      };
-      
-      navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-        .then(handleSuccess)
-        .catch(function(err) {
-          console.error('Error accessing microphone:', err);
-          isRecording = false;
-          document.getElementById('startButton').disabled = false;
-          document.getElementById('stopButton').disabled = true;
-          document.getElementById('audioStatus').textContent = 'Microphone: Error - ' + err.message;
+        // Start recording audio
+        async function startRecording() {
+            try {
+                // Request audio stream
+                audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                // Create audio context
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+                
+                // Connect and set up recording
+                const source = audioContext.createMediaStreamSource(audioStream);
+                const processor = audioContext.createScriptProcessor(4096, 1, 1);
+                
+                // Connect nodes
+                source.connect(processor);
+                processor.connect(audioContext.destination);
+                
+                // Set recording flag
+                isRecording = true;
+                document.body.classList.add('recording');
+                
+                // Update UI
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                updateStatus('Recording', 'red');
+                
+                // Process audio data
+                processor.onaudioprocess = function(e) {
+                    if (!isRecording) return;
+                    
+                    const inputData = e.inputBuffer.getChannelData(0);
+                    
+                    // Convert float32 to int16
+                    const pcmData = new Int16Array(inputData.length);
+                    for (let i = 0; i < inputData.length; i++) {
+                        pcmData[i] = Math.min(1, Math.max(-1, inputData[i])) * 0x7FFF;
+                    }
+                    
+                    // Send audio data to server if connection is open
+                    if (socket && socket.readyState === WebSocket.OPEN) {
+                        socket.send(pcmData.buffer);
+                    }
+                };
+                
+            } catch (error) {
+                console.error('Error starting recording:', error);
+                updateStatus('Recording Error', 'red');
+            }
+        }
+        
+        // Stop recording
+        function stopRecording() {
+            if (!isRecording) return;
+            
+            isRecording = false;
+            document.body.classList.remove('recording');
+            
+            // Stop all tracks in the audio stream
+            if (audioStream) {
+                audioStream.getTracks().forEach(track => track.stop());
+                audioStream = null;
+            }
+            
+            // Close audio context
+            if (audioContext) {
+                if (audioContext.state !== 'closed') {
+                    audioContext.close();
+                }
+                audioContext = null;
+            }
+            
+            // Update UI
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            updateStatus('Connected', 'green');
+        }
+        
+        // Add transcript to the display
+        function addTranscript(text) {
+            const entry = document.createElement('div');
+            entry.className = 'transcript-entry';
+            entry.textContent = text;
+            transcriptContent.appendChild(entry);
+            
+            // Scroll to bottom
+            transcriptContent.scrollTop = transcriptContent.scrollHeight;
+        }
+        
+        // Update status display
+        function updateStatus(text, color) {
+            statusText.textContent = text;
+            statusIndicator.style.backgroundColor = color;
+        }
+        
+        // Event listeners
+        startBtn.addEventListener('click', function() {
+            // Connect WebSocket if not already connected
+            if (!socket || socket.readyState !== WebSocket.OPEN) {
+                connectWebSocket();
+                
+                // Wait for connection to establish before starting recording
+                setTimeout(() => {
+                    if (socket && socket.readyState === WebSocket.OPEN) {
+                        startRecording();
+                    } else {
+                        updateStatus('Connection Failed', 'red');
+                    }
+                }, 1000);
+            } else {
+                startRecording();
+            }
         });
-    }
-    
-    function stopRecording() {
-      if (!isRecording) return;
-      
-      isRecording = false;
-      
-      // Update UI
-      document.getElementById('startButton').disabled = false;
-      document.getElementById('stopButton').disabled = true;
-      document.getElementById('audioStatus').textContent = 'Microphone: Inactive';
-      document.getElementById('speakingIndicator').style.display = 'none';
-      
-      if (globalStream) {
-        const tracks = globalStream.getTracks();
-        tracks.forEach(track => track.stop());
-      }
-      
-      if (input && processor) {
-        input.disconnect(processor);
-        processor.disconnect(context.destination);
-      }
-      
-      if (context) {
-        context.close().then(function() {
-          input = null;
-          processor = null;
-          context = null;
-          AudioContext = null;
+        
+        stopBtn.addEventListener('click', function() {
+            stopRecording();
         });
-      }
-    }
-    
-    function initWebSocket() {
-      // Close any existing connection
-      if (websocket) {
-        websocket.close();
-      }
-      
-      // Create new WebSocket
-      websocket = new WebSocket(websocket_uri);
-      
-      // WebSocket event handlers
-      websocket.onopen = function() {
-        console.log("Connected to ASR server");
-        updateConnectionStatus(true);
-      };
-      
-      websocket.onclose = function(e) {
-        console.log("Connection closed (" + e.code + ")");
-        updateConnectionStatus(false);
         
-        // Try to reconnect after 3 seconds
-        setTimeout(initWebSocket, 3000);
-      };
-      
-      websocket.onerror = function(e) {
-        console.error("WebSocket error:", e);
-        updateConnectionStatus(false);
-      };
-      
-      websocket.onmessage = function(e) {
-        try {
-          const result = JSON.parse(e.data);
-          
-          if (result && result.text) {
-            addTranscription(result.text);
-          }
-        } catch (error) {
-          console.error('Error processing message:', error);
-        }
-      };
-    }
-    
-    function updateConnectionStatus(connected) {
-      const indicator = document.getElementById('statusIndicator');
-      const status = document.getElementById('webSocketStatus');
-      
-      if (connected) {
-        indicator.classList.remove('disconnected');
-        indicator.classList.add('connected');
-        status.textContent = 'Connected';
-      } else {
-        indicator.classList.remove('connected');
-        indicator.classList.add('disconnected');
-        status.textContent = 'Not Connected';
+        // Initialize by connecting to WebSocket
+        window.addEventListener('load', function() {
+            connectWebSocket();
+        });
         
-        // Disable recording if connection is lost
-        if (isRecording) {
-          stopRecording();
-        }
-      }
-    }
-    
-    function addTranscription(text) {
-      const container = document.getElementById('transcriptionContainer');
-      
-      // Create new transcription element
-      const transcription = document.createElement('p');
-      transcription.className = 'transcription';
-      transcription.textContent = text;
-      
-      // Add to container
-      container.appendChild(transcription);
-      
-      // Scroll to bottom
-      container.scrollTop = container.scrollHeight;
-      
-      // Limit number of transcriptions (keep last 10)
-      const transcriptions = container.getElementsByClassName('transcription');
-      if (transcriptions.length > 10) {
-        container.removeChild(transcriptions[0]);
-      }
-    }
-    
-    // Handle page unload to properly clean up
-    window.addEventListener('beforeunload', function() {
-      if (isRecording) {
-        stopRecording();
-      }
-      
-      if (websocket) {
-        websocket.close();
-      }
-    });
-  </script>
+        // Handle page unload
+        window.addEventListener('beforeunload', function() {
+            if (isRecording) {
+                stopRecording();
+            }
+            
+            if (socket) {
+                socket.close();
+            }
+        });
+    </script>
 </body>
 </html>
