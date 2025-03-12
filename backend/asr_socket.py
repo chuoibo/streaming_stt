@@ -100,8 +100,6 @@ class ASRWebSocketServer:
         
         self.clients[client_id] = {
             'speech_detected': False,
-            'silent_frames': 0,
-            'max_silent_frames': 10,
             'last_process_time': time.time(),
             'speech_buffer': bytearray()
         }
@@ -127,7 +125,6 @@ class ASRWebSocketServer:
                             client['last_process_time'] = time.time()
                         
                         client['speech_buffer'].extend(message)
-                        client['silent_frames'] = 0
                         
                         current_time = time.time()
                         if (len(client['speech_buffer']) >= self.chunk_size_bytes or 
@@ -145,24 +142,6 @@ class ASRWebSocketServer:
                             client['speech_buffer'] = bytearray()
                             client['last_process_time'] = current_time
                         
-                    else: 
-                        if client['speech_detected']:
-                            if len(client['speech_buffer']) > self.frame_size:
-                                logger.info(f"Processing final chunk before silence of {len(client['speech_buffer'])} bytes for client {client_id}")
-                                self.process_audio_frames(
-                                    client_id, 
-                                    websocket, 
-                                    bytes(client['speech_buffer'])
-                                )
-                            
-                            client['silent_frames'] += 1
-                            
-                            if client['silent_frames'] >= client['max_silent_frames']:
-                                logger.debug(f"End of utterance detected for client {client_id}")
-                                client['speech_buffer'] = bytearray()
-                                client['speech_detected'] = False
-                                client['silent_frames'] = 0
-                
                 except Exception as e:
                     logger.error(f"Error processing frame: {e}")
                 
